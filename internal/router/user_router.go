@@ -12,8 +12,7 @@ func setupUserRoutes(r *gin.Engine) {
 	userGroup := r.Group("/api/user")
 	{
 		// 公开接口
-		userGroup.POST("/register", userHandler.Register)
-		userGroup.POST("/login", userHandler.Login)
+		userGroup.POST("/regAndLogin", userHandler.RegAndLogin)
 
 		// 需要认证的接口
 		userGroup.Use(middleware.AuthUser())

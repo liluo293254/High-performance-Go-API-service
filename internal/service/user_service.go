@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"time"
 
 	"bgame/internal/dao"
 	"bgame/internal/model"
@@ -9,116 +10,119 @@ import (
 )
 
 type UserService struct {
-	userDAO *dao.UserDAO
+	userDAO        *dao.UserDAO
+	userProfileDAO *dao.UserProfileDAO
 }
 
 func NewUserService() *UserService {
 	return &UserService{
-		userDAO: dao.NewUserDAO(),
+		userDAO:        dao.NewUserDAO(),
+		userProfileDAO: dao.NewUserProfileDAO(),
 	}
 }
 
-type RegisterRequest struct {
-	Username string `json:"username" binding:"required,min=3,max=50"`
-	Password string `json:"password" binding:"required,min=6,max=50"`
-	Email    string `json:"email" binding:"required,email"`
-	Nickname string `json:"nickname" binding:"max=50"`
-}
-
-type LoginRequest struct {
+type RegAndLoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
-type LoginResponse struct {
-	Token    string       `json:"token"`
-	UserInfo *model.User  `json:"user_info"`
+type RegAndLoginResponse struct {
+	Token    string      `json:"token"`
+	UserInfo *model.User `json:"user_info"`
+	UserProfile *model.UserProfile `json:"user_profile"`
 }
 
-// Register 用户注册
-func (s *UserService) Register(req *RegisterRequest) error {
+// RegAndLoginRequest 注册和登录
+func (s *UserService) RegAndLogin(req *RegAndLoginRequest) (*RegAndLoginResponse, error) {
 	// 检查用户名是否已存在
 	_, err := s.userDAO.GetByUsername(req.Username)
 	if err == nil {
-		return errors.New("用户名已存在")
+		return nil, errors.New("用户名已存在")
 	}
-
-	// 检查邮箱是否已存在
-	if req.Email != "" {
-		_, err := s.userDAO.GetByEmail(req.Email)
-		if err == nil {
-			return errors.New("邮箱已被注册")
-		}
-	}
-
 	// 加密密码
 	hashedPassword, err := util.HashPassword(req.Password)
 	if err != nil {
-		return errors.New("密码加密失败")
+		return nil, errors.New("密码加密失败")
 	}
-
 	// 创建用户
 	user := &model.User{
 		Username: req.Username,
 		Password: hashedPassword,
-		Email:    req.Email,
-		Nickname: req.Nickname,
+		Nickname: req.Username,
+		Email:    req.Username + "@bgame.com",
 		Status:   1,
 	}
-
 	if err := s.userDAO.Create(user); err != nil {
-		return errors.New("创建用户失败")
+		return nil, errors.New("创建用户失败")
 	}
-
-	return nil
-}
-
-// Login 用户登录
-func (s *UserService) Login(req *LoginRequest) (*LoginResponse, error) {
-	// 获取用户
-	user, err := s.userDAO.GetByUsername(req.Username)
-	if err != nil {
-		return nil, errors.New("用户名或密码错误")
+	// 创建用户资料
+	userProfile := &model.UserProfile{
+		UserID:          user.ID,
+		Balance:         0,
+		ActivityBalance: 0,
+		Level:           1,
+		Experience:      0,
+		RegisterTime:    time.Now(),
 	}
-
-	// 检查用户状态
-	if user.Status != 1 {
-		return nil, errors.New("用户已被禁用")
+	if err := s.userProfileDAO.CreateUserProfile(userProfile); err != nil {
+		return nil, errors.New("创建用户资料失败")
 	}
-
-	// 验证密码
-	if !util.CheckPassword(req.Password, user.Password) {
-		return nil, errors.New("用户名或密码错误")
-	}
-
-	// 生成token
 	token, err := util.GenerateUserToken(user.ID, user.Username)
 	if err != nil {
 		return nil, errors.New("生成token失败")
 	}
-
-	// 清除敏感信息
-	user.Password = ""
-
-	return &LoginResponse{
-		Token:    token,
-		UserInfo: user,
+	userProfile, err = s.userProfileDAO.GetUserProfileByUserID(user.ID)
+	if err != nil {
+		return nil, errors.New("获取用户资料失败")
+	}
+	return &RegAndLoginResponse{
+		Token: token,
+		UserInfo: &model.User{
+			ID:        user.ID,
+			Username:  user.Username,
+			Email:     user.Email,
+			Nickname:  user.Nickname,
+			Status:    user.Status,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		},
+		UserProfile: &model.UserProfile{
+			Balance:         userProfile.Balance,
+			ActivityBalance: userProfile.ActivityBalance,
+			Level:           userProfile.Level,
+			Experience:      userProfile.Experience,
+			RegisterTime:    userProfile.RegisterTime,
+		},
 	}, nil
 }
 
 // GetUserInfo 获取用户信息
-func (s *UserService) GetUserInfo(userID uint) (*model.User, error) {
-	user, err := s.userDAO.GetByID(userID)
+func (s *UserService) GetUserInfo(userID uint) (*model.UserProfile, error) {
+	user, err := s.userProfileDAO.GetUserProfileByUserID(userID)
 	if err != nil {
 		return nil, errors.New("用户不存在")
 	}
 
-	if user.Status != 1 {
-		return nil, errors.New("用户已被禁用")
-	}
-
-	// 清除敏感信息
-	user.Password = ""
-	return user, nil
+	return &model.UserProfile{
+		UserID:          user.UserID,
+		Balance:         user.Balance,
+		ActivityBalance: user.ActivityBalance,
+		Level:           user.Level,
+		Experience:      user.Experience,
+		RegisterTime:    user.RegisterTime,
+	}, nil
 }
 
+// CreateUserProfile 创建用户资料
+func (s *UserService) CreateUserProfile(userID uint, userProfile *model.UserProfile) error {
+	_, err := s.userDAO.GetByID(userID)
+	if err == nil {
+		return errors.New("用户不存在")
+	}
+	return s.userProfileDAO.CreateUserProfile(userProfile)
+}
+
+// GetUserProfileByUserID 根据用户ID获取用户资料
+func (s *UserService) GetUserProfileByUserID(userID uint) (*model.UserProfile, error) {
+	return s.userProfileDAO.GetUserProfileByUserID(userID)
+}
